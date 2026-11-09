@@ -81,7 +81,12 @@ DEB_DEPENDS += nasm
 
 LIBFFI=libffi6 # works on all but 20.04 and debian-testing
 
-ifeq ($(OS_VERSION_ID),22.04)
+ifeq ($(OS_VERSION_ID),24.04)
+    DEB_DEPENDS += llvm clang clang-format-19
+	LIBFFI=libffi8
+	DEB_DEPENDS += enchant-2  # for docs
+    # export CLANG_FORMAT_VER=19
+else ifeq ($(OS_VERSION_ID),22.04)
 	DEB_DEPENDS += python3-virtualenv
 	DEB_DEPENDS += libssl-dev
 	DEB_DEPENDS += libelf-dev # for libbpf (af_xdp)
