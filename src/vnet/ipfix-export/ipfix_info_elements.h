@@ -435,10 +435,10 @@ _(srhSectionIPv6, 507, octetArray)                                      \
 _(srhActiveSegmentIPv6Type, 508, u8)                                    \
 _(srhSegmentLocatorLength, 509, u8)                                     \
 _(srhSegmentEndpointBehavior, 510, u16)                                 \
-_(pathDelayMeanDeltaMicroseconds, 600, u32)                             \
-_(pathDelayMinDeltaMicroseconds, 601, u32)                              \
-_(pathDelayMaxDeltaMicroseconds, 602, u32)                              \
-_(pathDelaySumDeltaMicroseconds, 603, u64)
+_(pathDelayMeanDeltaMicroseconds, 530, u32)                             \
+_(pathDelayMinDeltaMicroseconds, 531, u32)                              \
+_(pathDelayMaxDeltaMicroseconds, 532, u32)                              \
+_(pathDelaySumDeltaMicroseconds, 533, u64)
 
 typedef enum
 {
