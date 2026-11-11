@@ -462,7 +462,9 @@ set_trace_profile_command_fn (vlib_main_t * vm, unformat_input_t * input, vlib_c
   else
   {
     vec_free(user_defined.opaque.data);
-    return clib_error_return (0, "%s", errstr);
+    clib_error_t *err = clib_error_return (0, "%v", errstr);
+    vec_free (errstr);
+    return err;
   }
   return 0;
 }
