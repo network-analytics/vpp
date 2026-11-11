@@ -30,6 +30,7 @@
 #include <ioam/lib-trace/trace_util.h>
 #include <ioam/lib-trace/trace_config.h>
 #include <ioam/encap/ip6_ioam_trace.h>
+#include <ioam/encap/ip6_ioam_dex.h>
 #include <ioam/udp-ping/udp_ping.h>
 #include <ioam/udp-ping/udp_ping_packet.h>
 #include <ioam/udp-ping/udp_ping_util.h>
@@ -709,6 +710,7 @@ ip6_trace_profile_cleanup (void)
   ip6_hop_by_hop_ioam_main_t *hm = &ip6_hop_by_hop_ioam_main;
 
   hm->options_size[HBH_OPTION_TYPE_IOAM_TRACE_DATA_LIST] = 0;
+  ip6_ioam_dex_profile_cleanup ();
   return 0;
 
 }
@@ -727,6 +729,11 @@ ip6_trace_profile_setup (void)
   {
     ip6_ioam_trace_stats_increment_counter (IP6_IOAM_TRACE_PROFILE_MISS, 1);
     return (-1);
+  }
+
+  if (profile->option_type & IOAM_OPTION_DEX)
+  {
+    return ip6_ioam_dex_profile_setup ();
   }
 
   if (ip6_ioam_trace_get_sizeof_handler (&trace_size) < 0)

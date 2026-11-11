@@ -26,6 +26,7 @@ add_vpp_plugin(ioam
   # iOAM Trace
   lib-trace/trace_util.c
   encap/ip6_ioam_trace.c
+  encap/ip6_ioam_dex.c
   lib-trace/trace_api.c
 
   # VxLAN-GPE
@@ -83,6 +84,7 @@ add_vpp_plugin(ioam
   lib-pot/math64.h
   lib-trace/trace_util.h
   encap/ip6_ioam_trace.h
+  encap/ip6_ioam_dex.h
   lib-trace/trace_config.h
   export-common/ioam_export.h
   lib-vxlan-gpe/vxlan_gpe_ioam_util.h

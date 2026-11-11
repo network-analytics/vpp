@@ -69,6 +69,15 @@ typedef struct
   /* Source of IOAM tunnel */
   ip6_address_t src_addr;
 
+  /* IOAM DEX (on-path delay): profile-derived state, cleared with the profile */
+  u8 dex_enabled;
+  u8 dex_node_type;
+  u8 dex_ts_frac_us;		/* 0: PTP truncated (ns), 1: POSIX (us) */
+  u16 dex_namespace_id;
+
+  /* IOAM DEX: Timestamp Seconds offset in rewrite, owned by the rewrite lifecycle */
+  u16 dex_ts_offset;
+
   /* Trace option */
   u8 has_trace_option;
 

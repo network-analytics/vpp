@@ -51,6 +51,10 @@ typedef struct
 #define HBH_OPTION_TYPE_IOAM_PROOF_OF_TRANSIT 50	/* Third highest bit set (change en-route) */
 #define HBH_OPTION_TYPE_IOAM_EDGE_TO_EDGE 17
 
+/* RFC 9486: DEX is read-only (chg=0); shares the value of E2E above, told apart by ioam_type */
+#define HBH_OPTION_TYPE_IOAM_DEX 0x11
+#define IOAM_TYPE_DEX 4
+
 #endif /* __included_ip6_hop_by_hop_packet_h__ */
 
 /*

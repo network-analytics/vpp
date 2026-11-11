@@ -19,6 +19,7 @@
 #include <vppinfra/mem.h>
 #include "trace_util.h"
 #include "trace_config.h"
+#include <ioam/encap/ip6_ioam_dex.h>
 
 __clib_export trace_main_t trace_main;
 
@@ -121,6 +122,11 @@ show_trace_profile_command_fn (vlib_main_t * vm, unformat_input_t * input, vlib_
     s = format (s, "\nTrace configuration not valid\n");
     vlib_cli_output (vm, "%v", s);
     vec_free (s);
+    return 0;
+  }
+  if (p->option_type & IOAM_OPTION_DEX)
+  {
+    ioam_dex_show_profile (vm);
     return 0;
   }
   s = format (s, " HOP BY HOP OPTIONS - TRACE CONFIG - \n");
@@ -227,7 +233,16 @@ unformat_option_type (unformat_input_t * input, va_list * args)
     {
       *result |= IOAM_OPTION_E2E;
     }
-  } while(tmp++ < 4);
+    else if (unformat (input, "dex"))
+    {
+      *result |= IOAM_OPTION_DEX;
+    }
+  } while(tmp++ < 5);
+  if ((*result & IOAM_OPTION_DEX) && (*result & ~IOAM_OPTION_DEX))
+  {
+    vlib_cli_output (vlib_get_main(), "WARNING: option-type (0x%x) combines dex with other types, defaulting to dex", *result);
+    *result = IOAM_OPTION_DEX;
+  }
   if( (*result & IOAM_OPTION_PREALLOC) && (*result &  IOAM_OPTION_INCREMENT) )
   {
     vlib_cli_output (vlib_get_main(), "WARNING: option-type (0x%x) contains both prealloc and increment, defaulting to prealloc", *result);
@@ -313,10 +328,10 @@ trace_util_check_input(u8 *inerror, va_list * args)
     inerror =  format (inerror, " - ERROR: Invalid trace-type (0x%x)\n", input->trace_type);
   }
   // check validity of option type
-  u8 all_options = IOAM_OPTION_PREALLOC | IOAM_OPTION_INCREMENT | IOAM_OPTION_POT | IOAM_OPTION_E2E;
+  u8 all_options = IOAM_OPTION_PREALLOC | IOAM_OPTION_INCREMENT | IOAM_OPTION_POT | IOAM_OPTION_E2E | IOAM_OPTION_DEX;
   if( input->option_type & ~all_options )
   {
-    inerror =  format (inerror, " - ERROR: Invalid option-type - [prealloc | increment | pot | e2e]\n");
+    inerror =  format (inerror, " - ERROR: Invalid option-type - [prealloc | increment | pot | e2e | dex]\n");
   }
   if (input->option_type == 0)
   {
@@ -327,6 +342,29 @@ trace_util_check_input(u8 *inerror, va_list * args)
   if((input->node_type & ~all_nodes) | !input->node_type)
   {
     inerror =  format (inerror, " - ERROR: Invalid node-type - [encap | transit | decap]\n");
+  }
+  if (input->option_type & IOAM_OPTION_DEX)
+  {
+    // DEX carries no data list, so num-elts, node-id and opaque do not apply
+    if (input->trace_type != IOAM_BIT_ON_PATH_DELAY)
+    {
+      inerror =  format (inerror, " - ERROR: option-type dex only supports trace-type 0x%x (on-path delay)\n", IOAM_BIT_ON_PATH_DELAY);
+    }
+    if ((input->ts_format != IOAM_TSP_NANOSECONDS) && (input->ts_format != IOAM_TSP_MICROSECONDS))
+    {
+      inerror =  format (inerror, " - ERROR: option-type dex requires ts-format-sub - [ns | us]\n");
+    }
+    if (!inerror)
+    {
+      clib_warning ("DEX profile ok: nsid %u tt 0x%x ts_fmt %u node_type %s",
+                    input->namespace_id, input->trace_type, input->ts_format,
+                    ioam_dex_node_type_str (input->node_type));
+    }
+    return inerror;
+  }
+  if (input->trace_type & IOAM_BIT_ON_PATH_DELAY)
+  {
+    inerror =  format (inerror, " - ERROR: on-path delay trace-type bit requires option-type dex\n");
   }
   if(!input->num_elts)
   {
@@ -433,7 +471,7 @@ set_trace_profile_command_fn (vlib_main_t * vm, unformat_input_t * input, vlib_c
 VLIB_CLI_COMMAND (set_trace_profile_command, static) =
 {
 .path = "set ioam-trace profile",
-.short_help = "set ioam-trace profile\n   Mandatory:\n      trace-type [as hex] namespace-id [n] num-elts [< 255] node-id-short [n > 0 (dec)] node-id-wide [n > 0x0 (hex)] queue-depth-type (if queue depth in trace-type) [drv-af-packet | drv-dpdk] node-type [encap | transit | decap]\n    Optional:\n     option-type [prealloc (default) | increment | pot | e2e] ts-format-sub [sec | ms | us | ns] app-data-short/-wide [in hex] opaque-len [n < 1020-bytes] opaque-id [n] opaque-data [hex]",
+.short_help = "set ioam-trace profile\n   Mandatory:\n      trace-type [as hex] namespace-id [n] num-elts [< 255] node-id-short [n > 0 (dec)] node-id-wide [n > 0x0 (hex)] queue-depth-type (if queue depth in trace-type) [drv-af-packet | drv-dpdk] node-type [encap | transit | decap]\n    Optional:\n     option-type [prealloc (default) | increment | pot | e2e | dex] ts-format-sub [sec | ms | us | ns] app-data-short/-wide [in hex] opaque-len [n < 1020-bytes] opaque-id [n] opaque-data [hex]\n   DEX (on-path delay): option-type dex trace-type 0x800 namespace-id [n] node-type [encap | transit | decap] ts-format-sub [ns | us]",
 .function = set_trace_profile_command_fn,
 };
 /*

@@ -51,12 +51,14 @@
  * Incremental - Node allocates and pushes telemetry data following option header
  * PoT - Proof of transit
  * E2E - Edge-to-Edge
+ * DEX - Direct Export (RFC 9326), exclusive: carries no data list, only a trigger
  * A nodes can use any of these simultaneously, incremental must precede prealloc
  */
 #define IOAM_OPTION_PREALLOC    (1<<0)
 #define IOAM_OPTION_INCREMENT   (1<<1)
 #define IOAM_OPTION_POT         (1<<2)
 #define IOAM_OPTION_E2E         (1<<3)
+#define IOAM_OPTION_DEX         (1<<4)
 /*
  * Node can only be one !
  * Encapsulation node - A node that adds at least one iOAM option and/or iOAM data 
@@ -178,7 +180,7 @@
  *      populate the data field, it is filled with all 0xFs.
  */
  // Trace type instruction bitmap
-#define    IOAM_INSTR_BITMAP_MASK     0xFFF002
+#define    IOAM_INSTR_BITMAP_MASK     0xFFF802
 // from pg 15
 #define    IOAM_BIT_TTL_NODEID_SHORT       (1<<23)
 #define    IOAM_BIT_ING_EGR_INT_SHORT      (1<<22)
@@ -192,6 +194,8 @@
 #define    IOAM_BIT_ING_EGR_INT_WIDE       (1<<14)
 #define    IOAM_BIT_APPDATA_WIDE_DATA      (1<<13)
 #define    IOAM_BIT_BUFFER_OCCUPANCY       (1<<12)
+/* Placeholder for TBD3 of draft-netana-ippm-ioam-on-path-delay (trace-type bit 12) */
+#define    IOAM_BIT_ON_PATH_DELAY          (1<<11)
 /*12-21 are undefined, view pg 16, set to 0 */
 // variable length opaue state snapshot
 #define    IOAM_BIT_VAR_LEN_OP_ST_SNSH     (1<<1)
