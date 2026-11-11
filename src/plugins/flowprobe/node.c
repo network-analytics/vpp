@@ -25,6 +25,8 @@
 #include <vlibmemory/api.h>
 #include <vnet/srv6/sr_packet.h>
 #include <vnet/srv6/sr.h>
+#include <vnet/ip/ip6_hop_by_hop.h>
+#include <ioam/encap/ip6_ioam_dex.h>
 
 static void flowprobe_export_entry (vlib_main_t * vm, flowprobe_entry_t * e);
 
@@ -508,6 +510,140 @@ flowprobe_create (u32 my_cpu_number, flowprobe_key_t * k, u32 * poolindex)
   return e;
 }
 
+typedef enum
+{
+  FLOWPROBE_DEX_NONE,		/* no DEX option for this node */
+  FLOWPROBE_DEX_OK,
+  FLOWPROBE_DEX_NOT_POPULATED,	/* missing timestamp, bad fraction or negative delta */
+  FLOWPROBE_DEX_OVERFLOW,	/* delay above 2^31-1 us */
+} flowprobe_dex_status_t;
+
+/*
+ * On-path delay from the DEX option in the outer HBH
+ * (draft-netana-ippm-ioam-on-path-delay, section 5).
+ * Own option walk: ip6_hbh_get_option () skips length + 4 octets, which is
+ * 2 too many.
+ */
+static flowprobe_dex_status_t
+flowprobe_dex_delay_us (vlib_buffer_t *b, ip6_hop_by_hop_header_t *hbh,
+                        timestamp_nsec_t now, u32 *delay_us)
+{
+  ip6_hop_by_hop_ioam_main_t *hm = &ip6_hop_by_hop_ioam_main;
+  u8 *hbh_end = (u8 *) hbh + ((hbh->length + 1) << 3);
+  u8 *opt = (u8 *) hbh + 2;
+  u8 *fields;
+  ioam_dex_option_t *dex = 0;
+  u32 n_fields = 0, enc_sec, enc_frac;
+  u8 has_sec, has_frac;
+  i64 delta;
+  u64 us;
+
+  if (hbh_end > (u8 *) vlib_buffer_get_tail (b))
+    return FLOWPROBE_DEX_NONE;
+
+  while (opt < hbh_end)
+    {
+      if (opt[0] == 0)		/* Pad1 */
+        {
+          opt++;
+          continue;
+        }
+      if (opt + 2 > hbh_end || opt + 2 + opt[1] > hbh_end)
+        return FLOWPROBE_DEX_NONE;
+      if (opt[0] == HBH_OPTION_TYPE_IOAM_DEX &&
+          opt[1] >= sizeof (ioam_dex_option_t) - 2 && opt[3] == IOAM_TYPE_DEX)
+        {
+          dex = (ioam_dex_option_t *) opt;
+          break;
+        }
+      opt += 2 + opt[1];
+    }
+  if (!dex)
+    return FLOWPROBE_DEX_NONE;
+
+  if (!hm->dex_enabled || hm->dex_node_type == IOAM_NODE_ENCAP)
+    {
+      IOAM_DEX_LOG ("DEX rx: skipped, %s",
+                    hm->dex_enabled ? "node-type encap" : "no DEX profile");
+      return FLOWPROBE_DEX_NONE;
+    }
+  if (clib_net_to_host_u16 (dex->namespace_id) != hm->dex_namespace_id)
+    {
+      IOAM_DEX_LOG ("DEX rx: skipped, namespace %u != %u",
+                    clib_net_to_host_u16 (dex->namespace_id),
+                    hm->dex_namespace_id);
+      return FLOWPROBE_DEX_NONE;
+    }
+  if (!(IOAM_GET_TRACETYPE (dex->trace_type) & IOAM_BIT_ON_PATH_DELAY))
+    {
+      IOAM_DEX_LOG ("DEX rx: skipped, trace type 0x%x has no on-path delay",
+                    IOAM_GET_TRACETYPE (dex->trace_type));
+      return FLOWPROBE_DEX_NONE;
+    }
+
+  /* Optional fields follow in Extension-Flags bit order: flow id, seq, sec, frac */
+  if (dex->ext_flags & IOAM_DEX_EXT_FLAG_FLOW_ID)
+    n_fields++;
+  if (dex->ext_flags & IOAM_DEX_EXT_FLAG_SEQ_NUM)
+    n_fields++;
+  has_sec = !!(dex->ext_flags & IOAM_DEX_EXT_FLAG_TS_SEC);
+  has_frac = !!(dex->ext_flags & IOAM_DEX_EXT_FLAG_TS_FRAC);
+  if (!has_sec || !has_frac ||
+      (u32) (2 + dex->hdr.length) < sizeof (*dex) + 4 * (n_fields + 2))
+    {
+      IOAM_DEX_LOG ("DEX rx: not populated, ext flags 0x%x len %u",
+                    dex->ext_flags, dex->hdr.length);
+      return FLOWPROBE_DEX_NOT_POPULATED;
+    }
+
+  fields = (u8 *) dex + sizeof (*dex);
+  clib_memcpy_fast (&enc_sec, fields + 4 * n_fields, sizeof (u32));
+  clib_memcpy_fast (&enc_frac, fields + 4 * (n_fields + 1), sizeof (u32));
+  enc_sec = clib_net_to_host_u32 (enc_sec);
+  enc_frac = clib_net_to_host_u32 (enc_frac);
+
+  /* Signed difference at the resolution of the format, before conversion */
+  if (hm->dex_ts_frac_us)
+    {
+      if (enc_frac >= 1000000)
+        {
+          IOAM_DEX_LOG ("DEX rx: not populated, fraction %u not in us", enc_frac);
+          return FLOWPROBE_DEX_NOT_POPULATED;
+        }
+      delta = ((i64) now.sec - (i64) enc_sec) * 1000000 +
+              ((i64) (now.nsec / 1000) - (i64) enc_frac);
+      us = delta;
+    }
+  else
+    {
+      if (enc_frac >= 1000000000)
+        {
+          IOAM_DEX_LOG ("DEX rx: not populated, fraction %u not in ns", enc_frac);
+          return FLOWPROBE_DEX_NOT_POPULATED;
+        }
+      delta = ((i64) now.sec - (i64) enc_sec) * 1000000000 +
+              ((i64) now.nsec - (i64) enc_frac);
+      us = (delta + 500) / 1000;
+    }
+  if (delta < 0)
+    {
+      IOAM_DEX_LOG ("DEX rx: not populated, negative delta (clock skew) enc %u.%u now %u.%u",
+                    enc_sec, enc_frac, now.sec, now.nsec);
+      return FLOWPROBE_DEX_NOT_POPULATED;
+    }
+  if (us > 0x7fffffff)
+    {
+      IOAM_DEX_LOG ("DEX rx: overflow, delay above 2^31-1 us");
+      return FLOWPROBE_DEX_OVERFLOW;
+    }
+
+  *delay_us = (u32) us;
+  IOAM_DEX_LOG ("DEX rx: node %s enc %u.%09u now %u.%09u delay_us %u",
+                ioam_dex_node_type_str (hm->dex_node_type), enc_sec, enc_frac,
+                now.sec, now.nsec, *delay_us);
+  return FLOWPROBE_DEX_OK;
+}
+
 static inline void
 add_to_flow_record_state (vlib_main_t *vm, vlib_node_runtime_t *node,
 			  flowprobe_main_t *fm, vlib_buffer_t *b,
@@ -616,6 +752,9 @@ add_to_flow_record_state (vlib_main_t *vm, vlib_node_runtime_t *node,
         next_header = ((u8 *) hbh) + ((hbh->length + 1) * 8 * sizeof(u8));
 
         if (collect_delay) {
+          u32 dex_delay_us = 0;
+
+          (void) flowprobe_dex_delay_us (b, hbh, timestamp, &dex_delay_us);
           u8 opt_len = trace->hdr.length;
           if (trace->hdr.ioam_type == 0) // preallocated trace option-type
           {
