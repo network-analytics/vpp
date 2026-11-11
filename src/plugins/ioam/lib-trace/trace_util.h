@@ -36,6 +36,8 @@
 #ifndef include_vnet_trace_util_h
 #define include_vnet_trace_util_h
 
+#include <vnet/ip/ip6_hop_by_hop_packet.h>
+
 #define debug_ioam debug_ioam_fn
 
 // Useful
@@ -67,10 +69,8 @@
  *                option type. DOES NOT add new or alter existing option types
  * Decapsulation node - In charge of removing iOAM option type and data before 
  *                      leaving iOAM domain
+ * IOAM_NODE_ENCAP / _TRANSIT / _DECAP are defined in ip6_hop_by_hop_packet.h
 */
-#define IOAM_NODE_ENCAP     (1<<0)
-#define IOAM_NODE_TRANSIT   (1<<1)
-#define IOAM_NODE_DECAP     (1<<2)
 
 #define IOAM_TSP_SECONDS       ((u8)0)
 #define IOAM_TSP_MILLISECONDS  ((u8)1)

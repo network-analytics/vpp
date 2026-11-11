@@ -1474,6 +1474,7 @@ ip6_ioam_set_rewrite (u8 ** rwp, int has_trace_option,
   u8 *pot_data_size = NULL;
 
   vec_free (*rwp);
+  hm->dex_ts_offset = 0;
 
   if (has_trace_option == 0 && has_pot_option == 0)
     return -1;
@@ -1521,6 +1522,8 @@ ip6_ioam_set_rewrite (u8 ** rwp, int has_trace_option,
 	      hm->add_options[HBH_OPTION_TYPE_IOAM_TRACE_DATA_LIST] (current,
 								     trace_data_size))
       {
+        if (((ip6_hop_by_hop_option_t *) current)->ioam_type == IOAM_TYPE_DEX)
+          hm->dex_ts_offset = (u16) ((current - rewrite) + IOAM_DEX_TS_SEC_OFFSET);
         current += *trace_data_size;
       }
 	  }
@@ -1563,6 +1566,7 @@ clear_ioam_rewrite_fn (void)
   hm->has_pot_option = 0;
   hm->has_seqno_option = 0;
   hm->has_analyse_option = 0;
+  hm->dex_ts_offset = 0;
   if (hm->config_handler[HBH_OPTION_TYPE_IOAM_TRACE_DATA_LIST])
     hm->config_handler[HBH_OPTION_TYPE_IOAM_TRACE_DATA_LIST] (NULL, 1);
 
@@ -1616,6 +1620,8 @@ ip6_ioam_enable (int has_trace_option, int has_pot_option,
   switch (rv)
   {
     case 0:
+      clib_warning ("rewrite: %U | dex_ts_offset %u", format_hex_bytes,
+		    hm->rewrite, (int) vec_len (hm->rewrite), hm->dex_ts_offset);
       copy_ip6_address(&hm->dst_addr, dst_addr);
 
       /* Compute outer Ip6 header source address for beginning of IOAM tunnel */
@@ -1681,6 +1687,8 @@ ip6_set_ioam_rewrite_command_fn (vlib_main_t * vm,
   int has_pot_option = 0;
   int has_seqno_option = 0;
   int has_analyse_option = 0;
+  int has_dex_option = 0;
+  ip6_hop_by_hop_ioam_main_t *hm = &ip6_hop_by_hop_ioam_main;
   ip6_address_t dst_addr;
   clib_error_t *rv = 0;
 
@@ -1690,6 +1698,8 @@ ip6_set_ioam_rewrite_command_fn (vlib_main_t * vm,
       has_dst_addr = 1;
     else if (unformat (input, "trace"))
       has_trace_option = 1;
+    else if (unformat (input, "dex"))
+      has_dex_option = 1;
     else if (unformat (input, "pot"))
       has_pot_option = 1;
     else if (unformat (input, "seqno"))
@@ -1702,6 +1712,19 @@ ip6_set_ioam_rewrite_command_fn (vlib_main_t * vm,
 
   if (!has_dst_addr)
     return clib_error_return (0, "- ERROR: Destination address of IOAM tunnel is required\n");
+
+  if (has_trace_option && hm->dex_enabled)
+    return clib_error_return (0, "- ERROR: profile is option-type dex, use 'dex' instead of 'trace'\n");
+
+  if (has_dex_option)
+  {
+    if (!hm->dex_enabled)
+      return clib_error_return (0, "- ERROR: 'dex' requires an option-type dex profile, see 'set ioam-trace profile'\n");
+    if (hm->dex_node_type != IOAM_NODE_ENCAP)
+      return clib_error_return (0, "- ERROR: 'dex' rewrite requires a profile with node-type encap\n");
+    /* DEX reuses the trace slot of the rewrite */
+    has_trace_option = 1;
+  }
 
   rv = ip6_ioam_enable (has_trace_option, has_pot_option,
 			has_seqno_option, has_analyse_option, &dst_addr);
@@ -1729,7 +1752,7 @@ ip6_set_ioam_rewrite_command_fn (vlib_main_t * vm,
 /* *INDENT-OFF* */
 VLIB_CLI_COMMAND (ip6_set_ioam_rewrite_cmd, static) = {
   .path = "set ioam rewrite",
-  .short_help = "set ioam rewrite dst_addr <dest address> [trace] [pot] [seqno] [analyse]",
+  .short_help = "set ioam rewrite dst_addr <dest address> [trace] [dex] [pot] [seqno] [analyse]",
   .function = ip6_set_ioam_rewrite_command_fn,
 };
 /* *INDENT-ON* */
@@ -1767,6 +1790,8 @@ ip6_show_ioam_summary_cmd_fn (vlib_main_t * vm,
   if (hm->has_trace_option)
     s =
       format (s,
+	      "%s", hm->dex_enabled ?
+	      "DEX in use, try 'show ioam-dex profile' for more information\n" :
 	      "Try 'show ioam trace and show ioam-trace profile' for more information\n");
 
 

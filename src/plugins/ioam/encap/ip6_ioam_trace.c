@@ -227,6 +227,11 @@ ip6_ioam_trace_get_sizeof_handler (u32 * result)
     return (-1);
   }
 
+  if (profile->option_type & IOAM_OPTION_DEX)
+  {
+    return ip6_ioam_dex_get_sizeof (result);
+  }
+
   trace_data_size = fetch_trace_data_size (profile);
   if (PREDICT_FALSE (trace_data_size == 0))
   { 
@@ -263,7 +268,10 @@ ip6_hop_by_hop_ioam_trace_rewrite_handler (u8 * rewrite_string, u8 * rewrite_siz
   {
     return -1;
   }
-  // TODO: add DEX option type here
+  if (profile->option_type & IOAM_OPTION_DEX)
+  {
+    return ip6_ioam_dex_rewrite (rewrite_string, rewrite_size);
+  }
   trace_option_elts = profile->num_elts;
   trace_data_size = fetch_trace_data_size (profile);
   clib_warning("trace_data_size %u * %u = %u", trace_option_elts, trace_data_size, trace_option_elts * trace_data_size);
@@ -733,7 +741,7 @@ ip6_trace_profile_setup (void)
 
   if (profile->option_type & IOAM_OPTION_DEX)
   {
-    return ip6_ioam_dex_profile_setup ();
+    ip6_ioam_dex_profile_setup ();
   }
 
   if (ip6_ioam_trace_get_sizeof_handler (&trace_size) < 0)

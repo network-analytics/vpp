@@ -27,6 +27,16 @@
 #define IOAM_DEX_EXT_FLAG_TS_SEC   0x20
 #define IOAM_DEX_EXT_FLAG_TS_FRAC  0x10
 
+/* DEX Option-Type as built by the encap node: Timestamp Sec + Fraction follow opt_fields[0] */
+typedef CLIB_PACKED (struct {
+  ip6_hop_by_hop_option_t hdr;
+  u16 namespace_id;
+  u8 flags;
+  u8 ext_flags;
+  u32 trace_type;		/* 24-bit trace type, last octet reserved */
+  u32 opt_fields[0];
+}) ioam_dex_option_t;
+
 static inline const char *
 ioam_dex_node_type_str (u8 node_type)
 {
@@ -44,6 +54,12 @@ int ip6_ioam_dex_profile_setup (void);
 
 /* Clear profile-derived DEX state (dex_ts_offset follows the rewrite) */
 void ip6_ioam_dex_profile_cleanup (void);
+
+/* Size in bytes of the DEX option written into the HBH rewrite */
+int ip6_ioam_dex_get_sizeof (u32 * result);
+
+/* Write the DEX option (timestamps zeroed) at rewrite_string */
+int ip6_ioam_dex_rewrite (u8 * rewrite_string, u8 * rewrite_size);
 
 /* Print the DEX profile and the runtime state used by the data path */
 void ioam_dex_show_profile (vlib_main_t * vm);

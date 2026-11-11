@@ -23,6 +23,46 @@
 #include <ioam/lib-trace/trace_config.h>
 #include <ioam/encap/ip6_ioam_dex.h>
 
+STATIC_ASSERT (IOAM_DEX_TS_SEC_OFFSET == sizeof (ioam_dex_option_t),
+	       "core assumes Timestamp Seconds follows the fixed DEX fields");
+
+#define IOAM_DEX_OPTION_SIZE (sizeof (ioam_dex_option_t) + 2 * sizeof (u32))
+
+int
+ip6_ioam_dex_get_sizeof (u32 * result)
+{
+  *result = IOAM_DEX_OPTION_SIZE;
+  return 0;
+}
+
+int
+ip6_ioam_dex_rewrite (u8 * rewrite_string, u8 * rewrite_size)
+{
+  trace_profile *profile = trace_profile_find ();
+  ioam_dex_option_t *dex = (ioam_dex_option_t *) rewrite_string;
+
+  if (PREDICT_FALSE (!rewrite_string || !profile || !profile->valid))
+    return -1;
+
+  dex->hdr.type = HBH_OPTION_TYPE_IOAM_DEX;
+  /* Opt Data Len excludes the option type and length octets */
+  dex->hdr.length = IOAM_DEX_OPTION_SIZE - 2;
+  dex->hdr.reserved = 0;
+  dex->hdr.ioam_type = IOAM_TYPE_DEX;
+  dex->namespace_id = clib_host_to_net_u16 (profile->namespace_id);
+  dex->flags = 0;
+  dex->ext_flags = IOAM_DEX_EXT_FLAG_TS_SEC | IOAM_DEX_EXT_FLAG_TS_FRAC;
+  dex->trace_type = IOAM_SET_TRACETYPE (profile->trace_type);
+  /* Timestamps are stamped per packet by the encap node */
+  clib_memset (rewrite_string + sizeof (*dex), 0, 2 * sizeof (u32));
+  *rewrite_size = IOAM_DEX_OPTION_SIZE;
+
+  clib_warning ("DEX rewrite: size %u len %u nsid %u ext 0x%x tt 0x%x",
+		(u32) IOAM_DEX_OPTION_SIZE, dex->hdr.length,
+		profile->namespace_id, dex->ext_flags, profile->trace_type);
+  return 0;
+}
+
 int
 ip6_ioam_dex_profile_setup (void)
 {

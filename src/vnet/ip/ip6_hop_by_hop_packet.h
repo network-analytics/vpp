@@ -55,6 +55,14 @@ typedef struct
 #define HBH_OPTION_TYPE_IOAM_DEX 0x11
 #define IOAM_TYPE_DEX 4
 
+/* Bytes from the start of the DEX option to Timestamp Seconds (no Flow ID / Sequence Number) */
+#define IOAM_DEX_TS_SEC_OFFSET 12
+
+/* IOAM node roles; a node is exactly one of them (see trace_util.h) */
+#define IOAM_NODE_ENCAP     (1<<0)
+#define IOAM_NODE_TRANSIT   (1<<1)
+#define IOAM_NODE_DECAP     (1<<2)
+
 #endif /* __included_ip6_hop_by_hop_packet_h__ */
 
 /*
