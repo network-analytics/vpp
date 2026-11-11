@@ -231,6 +231,16 @@ is_trace_option_enabled (void)
   return (ip6_hop_by_hop_ioam_main.has_trace_option);
 }
 
+/* Write Timestamp Seconds + Fraction (network order); fraction is ns (PTP) or us (POSIX) */
+always_inline void
+ip6_hbh_ioam_dex_stamp (u8 * ts_field, u32 sec, u32 nsec, u8 frac_us)
+{
+  u32 ts[2] = { clib_host_to_net_u32 (sec),
+		clib_host_to_net_u32 (frac_us ? nsec / 1000 : nsec) };
+
+  clib_memcpy_fast (ts_field, ts, sizeof (ts));
+}
+
 int ip6_trace_profile_setup ();
 
 static inline u32

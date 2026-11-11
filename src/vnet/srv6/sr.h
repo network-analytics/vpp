@@ -76,6 +76,7 @@ typedef struct
   u8 *rewrite;					/**< Precomputed rewrite header */
   u8 *rewrite_bsid;				/**< Precomputed rewrite header for bindingSID */
   u8 policy_type;
+  u16 ioam_dex_ts_offset;		/**< Offset of DEX Timestamp Seconds in rewrite, 0 if none */
 
   u32 egress_fib_table; /**< Egress FIB table for encap packet */
 

@@ -58,6 +58,17 @@ typedef struct
 /* Bytes from the start of the DEX option to Timestamp Seconds (no Flow ID / Sequence Number) */
 #define IOAM_DEX_TS_SEC_OFFSET 12
 
+/* PoC debug log, one line per (IOAM_DEX_LOG_MASK + 1) calls; use 0x3ff for line-rate traffic */
+#define IOAM_DEX_LOG_MASK 0x0
+#define IOAM_DEX_LOG(...)                                                     \
+  do                                                                          \
+    {                                                                         \
+      static u32 _dex_log_n;                                                  \
+      if ((_dex_log_n++ & IOAM_DEX_LOG_MASK) == 0)                            \
+        clib_warning (__VA_ARGS__);                                           \
+    }                                                                         \
+  while (0)
+
 /* IOAM node roles; a node is exactly one of them (see trace_util.h) */
 #define IOAM_NODE_ENCAP     (1<<0)
 #define IOAM_NODE_TRANSIT   (1<<1)

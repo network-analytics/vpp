@@ -420,6 +420,15 @@ create_sl (ip6_sr_policy_t * sr_policy, ip6_address_t * sl, u32 weight,
     {
       segment_list->rewrite = compute_rewrite_encaps (sl, sr_policy->type, ioam_hbh_trace_rewrite);
       segment_list->rewrite_bsid = segment_list->rewrite;
+      /* The HBH is only inserted for multi-SID, non-TEF encaps */
+      if (hm->dex_ts_offset && vec_len (ioam_hbh_trace_rewrite) > 0 &&
+	  vec_len (sl) > 1 && sr_policy->type != SR_POLICY_TYPE_TEF)
+	segment_list->ioam_dex_ts_offset =
+	  sizeof (ip6_header_t) + hm->dex_ts_offset;
+      if (ioam_trace_enabled)
+	clib_warning ("SR sl: ioam_dex_ts_offset %u (hm %u, sids %u, rewrite len %u)",
+		      segment_list->ioam_dex_ts_offset, hm->dex_ts_offset,
+		      vec_len (sl), vec_len (segment_list->rewrite));
     }
   else
     {
@@ -1341,6 +1350,28 @@ srv6_tef_behavior (vlib_node_runtime_t *node, vlib_buffer_t *b0,
 }
 
 /**
+ * @brief Stamp the encap time into the DEX option of the outer HBH
+ */
+static_always_inline void
+sr_ioam_dex_stamp (vlib_buffer_t *b0, ip6_header_t *ip0)
+{
+  ip6_hop_by_hop_ioam_main_t *hm = &ip6_hop_by_hop_ioam_main;
+  ip6_sr_sl_t *sl = pool_elt_at_index (sr_main.sid_lists,
+				       vnet_buffer (b0)->ip.adj_index[VLIB_TX]);
+  u32 sec, nsec;
+
+  if (!sl->ioam_dex_ts_offset)
+    return;
+
+  /* Clock read per packet; DEX is expected on a sampled subset only */
+  unix_time_now_nsec_fraction (&sec, &nsec);
+  ip6_hbh_ioam_dex_stamp ((u8 *) ip0 + sl->ioam_dex_ts_offset, sec, nsec,
+			  hm->dex_ts_frac_us);
+  IOAM_DEX_LOG ("DEX stamp: %u.%09u frac_us %u", sec, nsec,
+		hm->dex_ts_frac_us);
+}
+
+/**
  * @brief IPv6 encapsulation processing as per RFC2473
  */
 static_always_inline void
@@ -1366,6 +1397,8 @@ encaps_processing_v6 (vlib_node_runtime_t *node, vlib_buffer_t *b0,
     (flow_label & 0x0000ffff));
   if (policy_type == SR_POLICY_TYPE_TEF)
     srv6_tef_behavior (node, b0, ip0);
+  if (PREDICT_FALSE (ip6_hop_by_hop_ioam_main.dex_ts_offset))
+    sr_ioam_dex_stamp (b0, ip0);
 	// clib_warning("IP0: %U -> %U", format_ip6_address, &ip0->src_address, format_ip6_address, &ip0->dst_address);
 	// clib_warning("IP0_encap: %U -> %U", format_ip6_address, &ip0_encap->src_address, format_ip6_address, &ip0_encap->dst_address);
 }
