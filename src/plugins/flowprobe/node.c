@@ -123,7 +123,9 @@ vlib_node_registration_t flowprobe_output_l2_node;
 _(COLLISION, "Hash table collisions")		\
 _(BUFFER, "Buffer allocation error")		\
 _(EXPORTED_PACKETS, "Exported packets")		\
-_(INPATH, "Exported packets in path")
+_(INPATH, "Exported packets in path")		\
+_(DELAY_NOT_POPULATED, "On-path delay not populated, sample skipped")	\
+_(DELAY_OVERFLOW, "On-path delay above 2^31-1 us, sample skipped")
 
 typedef enum
 {
@@ -366,24 +368,34 @@ static inline u32
 flowprobe_onpath_delay_ip6_add (vlib_buffer_t * to_b, flowprobe_entry_t * e, u16 offset)
 {
   u16 start = offset;
+  u64 samples = e->path_delay_samples;
+
+  /* Template is fixed: report zeros when the interval had no valid sample */
+  u32 mean_us = samples ? (u32) (e->path_delay_sum_us / samples) : 0;
+  u32 min_us = samples ? e->path_delay_min_us : 0;
+  u32 max_us = samples ? e->path_delay_max_us : 0;
+
+  IOAM_DEX_LOG ("DEX export: samples %lu packets %lu min %u mean %u max %u sum %lu us",
+                samples, e->packetcount, min_us, mean_us, max_us,
+                e->path_delay_sum_us);
 
   /* pathDelayMeanDeltaMicroseconds */
-  u32 mean_delta_us = clib_host_to_net_u32((u32)(e->path_delay_sum_ns / e->packetcount / 1000));
+  u32 mean_delta_us = clib_host_to_net_u32 (mean_us);
   clib_memcpy_fast (to_b->data + offset, &mean_delta_us, sizeof (u32));
   offset += sizeof (u32);
 
   /* pathDelayMinDeltaMicroseconds */
-  u32 min_delta_us = clib_host_to_net_u32((u32)(e->path_delay_min_ns / 1000));
+  u32 min_delta_us = clib_host_to_net_u32 (min_us);
   clib_memcpy_fast (to_b->data + offset, &min_delta_us, sizeof (u32));
   offset += sizeof (u32);
 
   /* pathDelayMaxDeltaMicroseconds */
-  u32 max_delta_us = clib_host_to_net_u32((u32)(e->path_delay_max_ns / 1000));
+  u32 max_delta_us = clib_host_to_net_u32 (max_us);
   clib_memcpy_fast (to_b->data + offset, &max_delta_us, sizeof (u32));
   offset += sizeof (u32);
 
   /* pathDelaySumDeltaMicroseconds */
-  u64 sum_delta_us = clib_host_to_net_u64((u64)(e->path_delay_sum_ns / 1000));
+  u64 sum_delta_us = clib_host_to_net_u64 (e->path_delay_sum_us);
   clib_memcpy_fast (to_b->data + offset, &sum_delta_us, sizeof (u64));
   offset += sizeof (u64);
 
@@ -500,6 +512,10 @@ flowprobe_create (u32 my_cpu_number, flowprobe_key_t * k, u32 * poolindex)
   fm->hash_per_worker[my_cpu_number][h] = *poolindex;
 
   e->key = *k;
+  e->path_delay_sum_us = 0;
+  e->path_delay_samples = 0;
+  e->path_delay_min_us = 0;
+  e->path_delay_max_us = 0;
 
   if (fm->passive_timer > 0)
     {
@@ -663,6 +679,8 @@ add_to_flow_record_state (vlib_main_t *vm, vlib_node_runtime_t *node,
 
   u32 path_delay_sec = 0;
   i32 path_delay_ns = 0;
+  u32 delay_us = 0;
+  bool delay_valid = false;
 
   flowprobe_record_t flags = fm->context[which].flags;
   bool collect_ip4 = false, collect_ip6 = false, collect_srh = false, collect_delay = false;
@@ -752,9 +770,17 @@ add_to_flow_record_state (vlib_main_t *vm, vlib_node_runtime_t *node,
         next_header = ((u8 *) hbh) + ((hbh->length + 1) * 8 * sizeof(u8));
 
         if (collect_delay) {
-          u32 dex_delay_us = 0;
+          flowprobe_dex_status_t dex_status =
+            flowprobe_dex_delay_us (b, hbh, timestamp, &delay_us);
 
-          (void) flowprobe_dex_delay_us (b, hbh, timestamp, &dex_delay_us);
+          if (dex_status == FLOWPROBE_DEX_OK)
+            delay_valid = true;
+          else if (dex_status == FLOWPROBE_DEX_NOT_POPULATED)
+            vlib_node_increment_counter (vm, node->node_index,
+                                         FLOWPROBE_ERROR_DELAY_NOT_POPULATED, 1);
+          else if (dex_status == FLOWPROBE_DEX_OVERFLOW)
+            vlib_node_increment_counter (vm, node->node_index,
+                                         FLOWPROBE_ERROR_DELAY_OVERFLOW, 1);
           u8 opt_len = trace->hdr.length;
           if (trace->hdr.ioam_type == 0) // preallocated trace option-type
           {
@@ -812,6 +838,14 @@ add_to_flow_record_state (vlib_main_t *vm, vlib_node_runtime_t *node,
             //   path_delay_ns = -path_delay_ns;
             // clib_warning("delay1: %d ns", path_delay_ns);
             path_delay_ns += path_delay_sec * 1000000000;
+            if (path_delay_ns >= 0)
+              {
+                delay_us = path_delay_ns / 1000;
+                delay_valid = true;
+              }
+            else
+              vlib_node_increment_counter (vm, node->node_index,
+                                           FLOWPROBE_ERROR_DELAY_NOT_POPULATED, 1);
             // clib_warning("delay2: %d ns", path_delay_ns);
           }
         }
@@ -984,11 +1018,15 @@ add_to_flow_record_state (vlib_main_t *vm, vlib_node_runtime_t *node,
       e->flow_end = timestamp;
       e->prot.tcp.flags |= tcp_flags;
       e->srh_endpoint_behavior = active_sid_behavior;
-      e->path_delay_sum_ns += path_delay_ns;
-      if (path_delay_ns > e->path_delay_max_ns)
-        e->path_delay_max_ns = path_delay_ns;
-      if (path_delay_ns < e->path_delay_min_ns)
-        e->path_delay_min_ns = path_delay_ns;
+      if (delay_valid)
+        {
+          if (e->path_delay_samples == 0 || delay_us < e->path_delay_min_us)
+            e->path_delay_min_us = delay_us;
+          if (delay_us > e->path_delay_max_us)
+            e->path_delay_max_us = delay_us;
+          e->path_delay_sum_us += delay_us;
+          e->path_delay_samples++;
+        }
       // clib_warning("delay ns: [%llu, %llu] | %llu | %llu | %lu",e->path_delay_min_ns, e->path_delay_max_ns, e->path_delay_sum_ns, e->path_delay_sum_ns / e->packetcount, e->packetcount);
       // clib_warning("delay ms: [%llu, %llu] | %llu | %llu | %lu",e->path_delay_min_ms, e->path_delay_max_ms, e->path_delay_sum_ms, e->path_delay_sum_ms / e->packetcount, e->packetcount);
 
@@ -1204,9 +1242,10 @@ flowprobe_export_entry (vlib_main_t * vm, flowprobe_entry_t * e)
   /* Reset per flow-export counters */
   e->packetcount = 0;
   e->octetcount = 0;
-  e->path_delay_max_ns = 0;
-  e->path_delay_min_ns = 0xFFFFFFFF;
-  e->path_delay_sum_ns = 0;
+  e->path_delay_samples = 0;
+  e->path_delay_sum_us = 0;
+  e->path_delay_min_us = 0;
+  e->path_delay_max_us = 0;
   e->srh_endpoint_behavior = 0;
 
   e->last_exported = vlib_time_now (vm);
